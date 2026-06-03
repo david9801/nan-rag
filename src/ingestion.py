@@ -43,6 +43,14 @@ def split_by_sections(text: str, rfc_id: str) -> list[dict]:
             for sub in _subdivide(preamble, rfc_id, "Preamble"):
                 sections.append(sub)
 
+    # Si no hay ninguna sección numerada, indexar todo el texto como preamble
+    if not positions:
+        stripped = text.strip()
+        if len(stripped) >= 50:
+            for sub in _subdivide(stripped, rfc_id, "Preamble"):
+                sections.append(sub)
+        return sections
+
     positions.append(len(text))  # sentinel de fin
 
     for i in range(len(positions) - 1):
