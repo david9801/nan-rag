@@ -108,6 +108,9 @@ def ingest(rfc_ids: list[str], collection: chromadb.Collection) -> None:
 
         raw    = fetch_rfc(rfc_id)
         chunks = split_by_sections(raw, rfc_id)
+        # Renumerar globalmente para garantizar IDs únicos entre secciones
+        for i, chunk in enumerate(chunks):
+            chunk["chunk_index"] = i
         console.print(f"  [green]{len(chunks)} chunks generados[/green]")
 
         batch_size = 32
