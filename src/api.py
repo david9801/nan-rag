@@ -111,16 +111,26 @@ def indexed_rfcs():
     if col.count() == 0:
         return {"indexed": [], "total_chunks": 0}
 
-    results = col.get(
-        where={"is_sentinel": {"$eq": True}},
-        include=["metadatas"],
-    )
+    results = col.get(limit=col.count(), include=["metadatas"])
     rfc_ids = sorted({m["rfc_id"] for m in results["metadatas"] if "rfc_id" in m})
 
     return {
         "indexed":      rfc_ids,
         "total_chunks": col.count(),
     }
+
+
+@app.delete("/collection", dependencies=[Depends(require_auth)])
+def reset_collection():
+    """Borra y recrea la colección ChromaDB (útil para resetear tras un estado corrupto)."""
+    global _collection
+    db = chromadb.PersistentClient(path=DB_PATH)
+    db.delete_collection("rfcs")
+    _collection = db.get_or_create_collection(
+        name="rfcs",
+        metadata={"hnsw:space": "cosine"},
+    )
+    return {"status": "ok", "message": "Colección reseteada"}
 
 
 @app.post("/ingest", status_code=202, dependencies=[Depends(require_auth)])

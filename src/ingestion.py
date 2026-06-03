@@ -128,15 +128,7 @@ def ingest(rfc_ids: list[str], collection: chromadb.Collection) -> None:
                     "rfc_id":        c["rfc_id"],
                     "section_title": c["section_title"],
                     "title":         meta["title"],
-                    "is_sentinel":   False,
                 } for c in batch],
             )
-
-        # Upsert de sentinel para /rfcs/indexed (no requiere embedding)
-        collection.upsert(
-            ids       = [f"{rfc_id}__sentinel"],
-            documents = [meta["title"]],
-            metadatas = [{"rfc_id": rfc_id, "title": meta["title"], "is_sentinel": True}],
-        )
 
         console.print(f"  [bold green]✓ {rfc_id} indexado[/bold green]")

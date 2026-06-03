@@ -24,12 +24,7 @@ def retrieve(query: str, collection: chromadb.Collection,
         input=[query],
     ).data[0].embedding
 
-    # Filtro base: excluir sentinels
-    base_filter: dict = {"is_sentinel": {"$eq": False}}
-    if rfc_filter:
-        where = {"$and": [base_filter, {"rfc_id": {"$eq": rfc_filter}}]}
-    else:
-        where = base_filter
+    where = {"rfc_id": {"$eq": rfc_filter}} if rfc_filter else None
 
     results = collection.query(
         query_embeddings=[q_embed],
