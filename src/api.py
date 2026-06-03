@@ -14,7 +14,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 import chromadb
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
@@ -23,7 +23,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from .config import API_KEY, DB_PATH, EMBED_MODEL, LLM_MODEL, RFCS
-from .ingestion import ingest
+from .ingestion import ingest, ingest_pdf
 from .query import SYSTEM_PROMPT, build_context, client, retrieve
 
 _collection: chromadb.Collection | None = None
@@ -167,6 +167,75 @@ def ingest_status(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job no encontrado")
     return job
+
+
+@app.get("/documents")
+def list_documents():
+    """
+    Devuelve los PDFs subidos manualmente que ya están indexados en ChromaDB.
+    Los RFCs del catálogo no aparecen aquí; usa GET /rfcs/indexed para ellos.
+    """
+    col = get_collection()
+    if col.count() == 0:
+        return {"documents": []}
+
+    results = col.get(
+        where={"source_type": {"$eq": "pdf"}},
+        include=["metadatas"],
+    )
+
+    seen: dict[str, dict] = {}
+    for m in results["metadatas"]:
+        doc_id = m.get("rfc_id", "")
+        if doc_id and doc_id not in seen:
+            seen[doc_id] = {
+                "doc_id":   doc_id,
+                "filename": m.get("filename", ""),
+                "title":    m.get("title", ""),
+            }
+
+    return {"documents": list(seen.values())}
+
+
+@app.post("/documents/upload", dependencies=[Depends(require_auth)])
+async def upload_document(
+    file: UploadFile = File(...),
+    title: str | None = None,
+):
+    """
+    Sube e indexa un PDF en ChromaDB.
+    El doc_id se deriva del nombre del fichero (ej. 'my_report.pdf' → 'pdf_my_report').
+    Usa ese doc_id como valor de rfc_filter en POST /ask para acotar la búsqueda.
+
+    - Autenticación: requiere X-API-Key header.
+    - Límite de tamaño: 50 MB.
+    - Solo PDFs (content-type application/pdf o extensión .pdf).
+    """
+    MAX_SIZE = 50 * 1024 * 1024  # 50 MB
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Solo se aceptan ficheros .pdf")
+
+    pdf_bytes = await file.read()
+    if len(pdf_bytes) > MAX_SIZE:
+        raise HTTPException(status_code=413, detail="El fichero supera el límite de 50 MB")
+    if len(pdf_bytes) == 0:
+        raise HTTPException(status_code=400, detail="El fichero está vacío")
+
+    try:
+        result = ingest_pdf(pdf_bytes, file.filename, get_collection(), title=title)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    return {
+        "status":   "ok",
+        "doc_id":   result["doc_id"],
+        "filename": result["filename"],
+        "title":    result["title"],
+        "pages":    result["pages"],
+        "chunks":   result["chunks"],
+        "hint":     f"Usa rfc_filter: \"{result['doc_id']}\" en POST /ask para buscar solo en este documento",
+    }
 
 
 @app.post("/ask")

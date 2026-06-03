@@ -1,82 +1,221 @@
 # RFC RAG — NaN Builders
 
-RAG sobre estándares RFC usando el cluster de inferencia de NaN.
+Sistema de Retrieval-Augmented Generation (RAG) sobre estándares técnicos de Internet
+(RFCs) y documentos PDF propios, desplegado como API HTTP en NaN Cloud.
 
-**Stack:**
-- Embeddings: `qwen3-embedding` (NaN cluster)
-- LLM: `deepseek-v4-flash` (NaN cluster)
-- Vector DB: ChromaDB local persistente
+**Stack:** `qwen3-embedding` + `deepseek-v4-flash` (NaN Builders) · ChromaDB · FastAPI
 
 ---
 
-## Setup en la microVM
+## Inicio rápido
+
+### Opción A — API desplegada en NaN Cloud
 
 ```bash
-# 1. Clonar/subir el proyecto a la microVM
-cd rfc-rag
+# Preguntar al RAG (sin autenticación)
+curl -X POST https://<tu-url>/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "¿Qué es PKCE y por qué es necesario?"}'
 
-# 2. Instalar dependencias
+# Filtrar por un RFC concreto
+curl -X POST https://<tu-url>/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "¿Cómo funciona el Authorization Code Grant?", "rfc_filter": "rfc6749"}'
+
+# Respuesta en streaming
+curl -X POST https://<tu-url>/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Explica TLS 1.3", "stream": true}'
+```
+
+### Opción B — Local
+
+```bash
+git clone https://github.com/david9801/nan-rag
+cd nan-rag
+
+cp .env.example .env
+# Editar .env y añadir NAN_API_KEY
+
 bash setup.sh
 
-# 3. Configurar API key de NaN
-cp .env.example .env
-nano .env   # pega tu NAN_API_KEY
+# CLI
+python -m src.main ingest rfc6749 rfc7519 rfc7636
+python -m src.main ask "¿Qué es un Bearer token?"
 
-# 4. Ir al directorio de código
-cd src
+# O levantar la API localmente
+uvicorn src.api:app --port 3000 --reload
 ```
 
-## Uso
+---
+
+## RFCs incluidos en el catálogo
+
+| ID | Título |
+|----|--------|
+| `rfc6749` | OAuth 2.0 Authorization Framework |
+| `rfc6750` | OAuth 2.0 Bearer Token Usage |
+| `rfc7519` | JSON Web Token (JWT) |
+| `rfc7636` | PKCE for OAuth Public Clients |
+| `rfc8414` | OAuth 2.0 Authorization Server Metadata |
+| `rfc8446` | TLS 1.3 |
+| `rfc9110` | HTTP Semantics |
+
+Para añadir más RFCs edita el diccionario `RFCS` en `src/config.py`.
+
+---
+
+## API — Referencia rápida
+
+### Endpoints públicos
+
+#### `GET /`
+Health check.
+```json
+{"status": "ok", "chunks_indexed": 742, "embed_model": "qwen3-embedding", "llm_model": "deepseek-v4-flash"}
+```
+
+#### `GET /rfcs`
+Catálogo completo de RFCs disponibles para indexar.
+
+#### `GET /rfcs/indexed`
+RFCs que ya están indexados en ChromaDB.
+```json
+{"indexed": ["rfc6749", "rfc7519"], "total_chunks": 196}
+```
+
+#### `GET /documents`
+PDFs subidos manualmente e indexados.
+```json
+{"documents": [{"doc_id": "pdf_my_report", "filename": "my_report.pdf", "title": "My Report"}]}
+```
+
+#### `POST /ask`
+Pregunta al RAG. Límite: **5 peticiones/minuto y 100/día por IP**.
 
 ```bash
-# Ver RFCs disponibles en el catálogo
-python main.py list
-
-# Indexar RFCs específicos (recomendado para empezar)
-python main.py ingest rfc6749 rfc7519 rfc7636
-
-# Indexar todos los del catálogo
-python main.py ingest
-
-# Modo interactivo
-python main.py ask
-
-# Pregunta directa
-python main.py ask "¿Qué es el Authorization Code Grant?"
-
-# Filtrar por RFC específico
-python main.py ask "@rfc6749 ¿Cuánto puede durar un access token?"
+curl -X POST /ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "¿Cómo previene PKCE el ataque de interceptación?",
+    "rfc_filter": "rfc7636",
+    "stream": false
+  }'
 ```
 
-## Añadir más RFCs
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `question` | string | Pregunta en cualquier idioma |
+| `rfc_filter` | string \| null | Limitar búsqueda a un documento (RFC o PDF) por su ID |
+| `stream` | bool | `true` para respuesta en streaming (text/plain) |
 
-Edita `src/config.py` y añade una entrada al diccionario `RFCS`:
-
-```python
-"rfc7662": {
-    "url":         "https://www.rfc-editor.org/rfc/rfc7662.txt",
-    "title":       "OAuth 2.0 Token Introspection",
-    "description": "Endpoint para inspeccionar tokens OAuth",
-},
+Respuesta:
+```json
+{
+  "answer": "PKCE previene el ataque porque...",
+  "sources": [
+    {"rfc_id": "rfc7636", "title": "PKCE for OAuth Public Clients",
+     "section_title": "1.1.  Protocol Flow", "score": 0.74}
+  ]
+}
 ```
 
-Luego indexa el nuevo RFC:
+---
+
+### Endpoints admin (requieren `X-API-Key` header)
+
+#### `POST /ingest`
+Indexa RFCs del catálogo en background. Devuelve un `job_id`.
+
 ```bash
-python main.py ingest rfc7662
+curl -X POST /ingest \
+  -H "X-API-Key: <tu_clave>" \
+  -H "Content-Type: application/json" \
+  -d '{"rfc_ids": ["rfc6749", "rfc7519"]}'
+  # rfc_ids vacío = indexar todos
 ```
 
-## Estructura
+#### `GET /ingest/{job_id}`
+Estado del job: `running` · `done` · `error`.
+
+#### `POST /documents/upload`
+Sube e indexa un PDF propio. Máximo **50 MB**. Solo acepta `.pdf`.
+
+```bash
+curl -X POST /documents/upload \
+  -H "X-API-Key: <tu_clave>" \
+  -F "file=@mi_documento.pdf" \
+  -F "title=Mi Documento Técnico"      # opcional
+```
+
+Respuesta:
+```json
+{
+  "status": "ok",
+  "doc_id": "pdf_mi_documento",
+  "filename": "mi_documento.pdf",
+  "title": "Mi Documento Técnico",
+  "pages": 42,
+  "chunks": 87,
+  "hint": "Usa rfc_filter: \"pdf_mi_documento\" en POST /ask para buscar solo en este documento"
+}
+```
+
+Después de subir, filtra la búsqueda al documento:
+```bash
+curl -X POST /ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "¿Cuál es la conclusión del capítulo 3?", "rfc_filter": "pdf_mi_documento"}'
+```
+
+#### `DELETE /collection`
+Borra y recrea la colección ChromaDB. Útil para resetear tras un estado corrupto.
+
+---
+
+## Deploy en NaN Cloud
+
+1. Fork o usa el repositorio directamente.
+2. En NaN Cloud → Apps → New App:
+   - Repository: `david9801/nan-rag`
+   - Branch: `main`
+   - Dockerfile path: `Dockerfile`
+   - Container port: `3000`
+3. Variables de entorno (Runtime):
+   - `NAN_API_KEY` — **obligatoria**
+   - `API_KEY` — recomendada en producción (protege endpoints admin)
+   - `DB_PATH` — `/app/data/chroma_db` (ya incluida en el Dockerfile como default)
+4. Deploy → esperar build (~2 min).
+5. Indexar RFCs:
+   ```bash
+   curl -X POST https://<tu-url>/ingest \
+     -H "X-API-Key: <API_KEY>" \
+     -d '{"rfc_ids": ["rfc6749", "rfc7519", "rfc7636"]}'
+   ```
+
+> **Nota sobre persistencia:** ChromaDB vive dentro del contenedor. Al reiniciar se
+> pierden los datos indexados. Solución recomendada: tras indexar, commitear el
+> directorio `data/chroma_db/` al repositorio (elimínalo del `.gitignore`) y el
+> `COPY data/ ./data/` del Dockerfile lo incluirá en la imagen.
+
+---
+
+## Estructura del proyecto
 
 ```
-rfc-rag/
-├── setup.sh          # instala dependencias
-├── .env.example      # plantilla de configuración
+nan-rag/
+├── Dockerfile
+├── requirements.txt
+├── setup.sh                  # instalación local rápida
+├── .env.example              # plantilla de configuración
+├── CLAUDE.md                 # documentación técnica para desarrolladores
 ├── data/
-│   ├── rfcs/         # caché de RFCs descargados (opcional)
-│   └── chroma_db/    # base de datos vectorial persistente
+│   └── chroma_db/            # ChromaDB persistente (excluida del repo)
 └── src/
-    ├── config.py     # configuración, cliente NaN, catálogo de RFCs
-    ├── ingestion.py  # descarga, chunking y embedding
-    ├── query.py      # recuperación y generación de respuestas
-    └── main.py       # CLI principal
+    ├── __init__.py
+    ├── config.py             # constantes, cliente NaN, catálogo de RFCs
+    ├── ingestion.py          # descarga RFCs, parsea PDFs, chunking, embedding
+    ├── query.py              # retrieval por similitud coseno + generación LLM
+    ├── api.py                # FastAPI: todos los endpoints HTTP
+    └── main.py               # CLI: ingest / ask / list
 ```

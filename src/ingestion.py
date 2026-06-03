@@ -1,7 +1,9 @@
 import re
 import time
+import unicodedata
 import requests
 import chromadb
+import fitz  # pymupdf
 from rich.console import Console
 from rich.progress import track
 
@@ -132,3 +134,139 @@ def ingest(rfc_ids: list[str], collection: chromadb.Collection) -> None:
             )
 
         console.print(f"  [bold green]✓ {rfc_id} indexado[/bold green]")
+
+
+# ── Ingestion de PDFs ──────────────────────────────────────────────────────────
+
+def _sanitize_doc_id(filename: str) -> str:
+    """Convierte un nombre de fichero en un doc_id seguro para ChromaDB."""
+    name = filename.rsplit(".", 1)[0]          # quitar extensión
+    name = unicodedata.normalize("NFKD", name)
+    name = name.encode("ascii", "ignore").decode()
+    name = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+    name = re.sub(r"_+", "_", name).strip("_")
+    return f"pdf_{name[:48]}"                  # prefijo para distinguir de RFCs
+
+
+def _extract_text_from_pdf(pdf_bytes: bytes) -> list[tuple[int, str]]:
+    """
+    Extrae texto de un PDF página a página.
+    Devuelve lista de (page_number, text).
+    """
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pages = []
+    for page in doc:
+        text = page.get_text("text")
+        if text.strip():
+            pages.append((page.number + 1, text))
+    doc.close()
+    return pages
+
+
+def _split_pdf_into_chunks(pages: list[tuple[int, str]], doc_id: str,
+                            filename: str, title: str) -> list[dict]:
+    """
+    Chunking de PDF por párrafos con ventana deslizante.
+    Respeta los saltos de párrafo (doble newline) para no cortar ideas a mitad.
+    """
+    char_size    = CHUNK_SIZE * 4
+    char_overlap = CHUNK_OVERLAP * 4
+    chunks = []
+    idx    = 0
+
+    for page_num, page_text in pages:
+        # Dividir por párrafos y recombinar hasta llegar a char_size
+        paragraphs = [p.strip() for p in re.split(r'\n{2,}', page_text) if p.strip()]
+        buffer = ""
+
+        for para in paragraphs:
+            if len(buffer) + len(para) + 1 > char_size and buffer:
+                chunk_text = f"[{title} · Página {page_num}]\n{buffer.strip()}"
+                chunks.append({
+                    "doc_id":        doc_id,
+                    "rfc_id":        doc_id,   # rfc_id actúa como source_id genérico
+                    "section_title": f"Página {page_num}",
+                    "chunk_index":   idx,
+                    "filename":      filename,
+                    "title":         title,
+                    "page":          page_num,
+                    "source_type":   "pdf",
+                    "text":          chunk_text,
+                })
+                idx += 1
+                # Overlap: conservar los últimos char_overlap caracteres del buffer
+                buffer = buffer[-char_overlap:] + "\n" + para
+            else:
+                buffer = (buffer + "\n" + para).strip()
+
+        # Flush del buffer al final de la página
+        if buffer.strip():
+            chunk_text = f"[{title} · Página {page_num}]\n{buffer.strip()}"
+            chunks.append({
+                "doc_id":        doc_id,
+                "rfc_id":        doc_id,
+                "section_title": f"Página {page_num}",
+                "chunk_index":   idx,
+                "filename":      filename,
+                "title":         title,
+                "page":          page_num,
+                "source_type":   "pdf",
+                "text":          chunk_text,
+            })
+            idx += 1
+
+    return chunks
+
+
+def ingest_pdf(pdf_bytes: bytes, filename: str,
+               collection: chromadb.Collection,
+               title: str | None = None) -> dict:
+    """
+    Extrae texto de un PDF, lo trocea, genera embeddings y lo indexa en ChromaDB.
+    Devuelve metadatos del resultado: doc_id, filename, chunks indexados.
+
+    - doc_id: identificador derivado del nombre del fichero (ej. pdf_my_report)
+    - Usa rfc_id = doc_id para que el filtro rfc_filter de /ask funcione igual
+    - source_type = "pdf" permite distinguirlos de RFCs en /documents
+    """
+    doc_id       = _sanitize_doc_id(filename)
+    display_title = title or filename.rsplit(".", 1)[0]
+
+    console.print(f"\n[bold]→ Indexando PDF[/bold] — {filename} (doc_id: {doc_id})")
+
+    pages  = _extract_text_from_pdf(pdf_bytes)
+    chunks = _split_pdf_into_chunks(pages, doc_id, filename, display_title)
+    console.print(f"  [green]{len(pages)} páginas, {len(chunks)} chunks generados[/green]")
+
+    if not chunks:
+        raise ValueError(f"No se pudo extraer texto de '{filename}'. ¿Es un PDF escaneado sin OCR?")
+
+    batch_size = 32
+    for i in track(range(0, len(chunks), batch_size),
+                    description=f"  Embedding {doc_id}"):
+        batch  = chunks[i:i + batch_size]
+        texts  = [c["text"] for c in batch]
+        embeds = embed(texts)
+
+        collection.upsert(
+            ids        = [f"{doc_id}_{c['chunk_index']:04d}" for c in batch],
+            embeddings = embeds,
+            documents  = texts,
+            metadatas  = [{
+                "rfc_id":        c["rfc_id"],
+                "section_title": c["section_title"],
+                "title":         c["title"],
+                "filename":      c["filename"],
+                "page":          c["page"],
+                "source_type":   c["source_type"],
+            } for c in batch],
+        )
+
+    console.print(f"  [bold green]✓ {filename} indexado como {doc_id}[/bold green]")
+    return {
+        "doc_id":   doc_id,
+        "filename": filename,
+        "title":    display_title,
+        "pages":    len(pages),
+        "chunks":   len(chunks),
+    }
