@@ -1,0 +1,7 @@
+openai
+chromadb
+requests
+rich
+python-dotenv
+fastapi
+uvicorn[standard]
