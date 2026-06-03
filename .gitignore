@@ -1,0 +1,22 @@
+# Entorno y secretos
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# ChromaDB (datos indexados en local — commitar solo si quieres persistencia en Docker)
+# Para hacer persistente la DB en NaN Cloud, elimina esta línea y commitea data/
+data/chroma_db/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
