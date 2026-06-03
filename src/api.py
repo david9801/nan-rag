@@ -10,13 +10,15 @@ Endpoints:
   POST /ask                    — hacer una pregunta
 """
 
+import os
 import uuid
 from contextlib import asynccontextmanager
 
 import chromadb
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security.api_key import APIKeyHeader
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -58,6 +60,11 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Servir el frontend desde /ui si el directorio existe
+_frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
+if os.path.isdir(_frontend_dir):
+    app.mount("/ui", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
 
 
 # ── Autenticación (solo para endpoints de administración) ─────────────────────

@@ -6,8 +6,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Código fuente
+# Código fuente y frontend
 COPY src/ ./src/
+COPY frontend/ ./frontend/
 
 # DB pre-indexada (si existe en el repo se copia; si no, se crea vacía)
 RUN mkdir -p /app/data/chroma_db
