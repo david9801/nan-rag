@@ -1,4 +1,5 @@
 import os
+import pathlib
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -8,8 +9,14 @@ NAN_API_KEY  = os.getenv("NAN_API_KEY")
 NAN_BASE_URL = os.getenv("NAN_BASE_URL", "https://api.nan.builders/v1")
 EMBED_MODEL  = os.getenv("EMBED_MODEL",  "qwen3-embedding")
 LLM_MODEL    = os.getenv("LLM_MODEL",    "deepseek-v4-flash")
+API_KEY      = os.getenv("API_KEY")       # clave para proteger la API HTTP
 
-CHUNK_SIZE    = 800    # tokens aprox — adecuado para secciones de RFC
+# DB_PATH: override via env var para Docker (/app/data/chroma_db)
+# Por defecto apunta a <repo_root>/data/chroma_db cuando se ejecuta localmente
+_repo_root = pathlib.Path(__file__).parent.parent
+DB_PATH     = os.getenv("DB_PATH", str(_repo_root / "data" / "chroma_db"))
+
+CHUNK_SIZE    = 800    # tokens aprox
 CHUNK_OVERLAP = 100
 TOP_K         = 5      # chunks a recuperar por query
 
@@ -18,7 +25,6 @@ client = OpenAI(
     base_url=NAN_BASE_URL,
 )
 
-# RFCs disponibles para indexar
 RFCS = {
     "rfc6749": {
         "url":         "https://www.rfc-editor.org/rfc/rfc6749.txt",

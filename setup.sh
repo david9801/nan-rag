@@ -7,6 +7,8 @@ pip install --break-system-packages \
   chromadb \
   requests \
   rich \
-  python-dotenv
+  python-dotenv \
+  fastapi \
+  "uvicorn[standard]"
 
 echo "✅ Listo"

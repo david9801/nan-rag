@@ -2,11 +2,11 @@
 """
 RFC RAG — NaN Builders cluster
 Uso:
-  python main.py ingest                      # indexa todos los RFCs del catálogo
-  python main.py ingest rfc6749 rfc7519      # indexa solo los indicados
-  python main.py ask                         # modo interactivo
-  python main.py ask "¿Qué es PKCE?"        # pregunta directa
-  python main.py list                        # muestra RFCs disponibles
+  python -m src.main ingest                      # indexa todos los RFCs del catálogo
+  python -m src.main ingest rfc6749 rfc7519      # indexa solo los indicados
+  python -m src.main ask                         # modo interactivo
+  python -m src.main ask "¿Qué es PKCE?"        # pregunta directa
+  python -m src.main list                        # muestra RFCs disponibles
 """
 
 import sys
@@ -14,12 +14,11 @@ import chromadb
 from rich.console import Console
 from rich.table import Table
 
-from config import RFCS
-from ingestion import ingest
-from query import ask
+from .config import DB_PATH, RFCS
+from .ingestion import ingest
+from .query import ask
 
 console = Console()
-DB_PATH = "./data/chroma_db"
 
 
 def get_collection() -> chromadb.Collection:
@@ -68,7 +67,7 @@ def cmd_ask(question: str | None):
 
     if count == 0:
         console.print("[red]La base de datos está vacía. Ejecuta primero:[/red]")
-        console.print("  python main.py ingest")
+        console.print("  python -m src.main ingest")
         sys.exit(1)
 
     console.print(f"[dim]Base de datos: {count} chunks de {len(RFCS)} RFCs posibles[/dim]")
@@ -76,10 +75,9 @@ def cmd_ask(question: str | None):
 
     def process(q: str):
         rfc_filter = None
-        # Detectar filtro de RFC: @rfc6749 ¿qué es ...?
         if q.startswith("@"):
             parts = q.split(" ", 1)
-            rfc_filter = parts[0][1:]  # quitar el @
+            rfc_filter = parts[0][1:]
             q = parts[1] if len(parts) > 1 else ""
             console.print(f"[dim]Filtrando por: {rfc_filter}[/dim]")
 
@@ -88,13 +86,12 @@ def cmd_ask(question: str | None):
 
         console.rule()
         ask(q, collection, rfc_filter=rfc_filter)
+        console.print()
         console.rule()
 
     if question:
-        # Pregunta directa desde CLI
         process(question)
     else:
-        # Modo interactivo
         while True:
             try:
                 q = console.input("\n[bold cyan]Pregunta[/bold cyan] › ").strip()
