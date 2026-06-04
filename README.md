@@ -1,15 +1,15 @@
 # RFC RAG — NaN Builders
 
 Sistema de Retrieval-Augmented Generation (RAG) sobre estándares técnicos de Internet
-(RFCs) y documentos PDF propios, desplegado como API HTTP en NaN Cloud.
+(RFCs) y documentos PDF propios, con interfaz de chat web y API HTTP, desplegado en NaN Cloud.
 
-**Stack:** `qwen3-embedding` + `deepseek-v4-flash` (NaN Builders) · ChromaDB · FastAPI
+**Stack:** `qwen3-embedding` + `deepseek-v4-flash` (NaN Builders) · ChromaDB · FastAPI · Alpine.js
 
 ---
 
 ## Inicio rápido
 
-### Opción A — API desplegada en NaN Cloud
+### Opción A — Usar la API directamente
 
 ```bash
 # Preguntar al RAG (sin autenticación)
@@ -17,18 +17,22 @@ curl -X POST https://<tu-url>/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "¿Qué es PKCE y por qué es necesario?"}'
 
-# Filtrar por un RFC concreto
+# Filtrar por RFC concreto
 curl -X POST https://<tu-url>/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "¿Cómo funciona el Authorization Code Grant?", "rfc_filter": "rfc6749"}'
-
-# Respuesta en streaming
-curl -X POST https://<tu-url>/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question": "Explica TLS 1.3", "stream": true}'
 ```
 
-### Opción B — Local
+### Opción B — Interfaz de chat web
+
+Abre en el navegador: `https://<tu-url>/ui`
+
+- Typewriter effect en respuestas
+- Acordeón de fuentes con score de relevancia
+- Selector de RFC en el sidebar
+- Responsive (móvil y escritorio)
+
+### Opción C — Local
 
 ```bash
 git clone https://github.com/david9801/nan-rag
@@ -43,8 +47,9 @@ bash setup.sh
 python -m src.main ingest rfc6749 rfc7519 rfc7636
 python -m src.main ask "¿Qué es un Bearer token?"
 
-# O levantar la API localmente
+# API + UI local
 uvicorn src.api:app --port 3000 --reload
+# Abre http://localhost:3000/ui
 ```
 
 ---
@@ -75,11 +80,14 @@ Health check.
 {"status": "ok", "chunks_indexed": 742, "embed_model": "qwen3-embedding", "llm_model": "deepseek-v4-flash"}
 ```
 
+#### `GET /ui`
+Interfaz de chat web (Alpine.js + Marked.js + Tailwind, sin build step).
+
 #### `GET /rfcs`
 Catálogo completo de RFCs disponibles para indexar.
 
 #### `GET /rfcs/indexed`
-RFCs que ya están indexados en ChromaDB.
+RFCs ya indexados en ChromaDB.
 ```json
 {"indexed": ["rfc6749", "rfc7519"], "total_chunks": 196}
 ```
@@ -106,8 +114,8 @@ curl -X POST /ask \
 | Campo | Tipo | Descripción |
 |-------|------|-------------|
 | `question` | string | Pregunta en cualquier idioma |
-| `rfc_filter` | string \| null | Limitar búsqueda a un documento (RFC o PDF) por su ID |
-| `stream` | bool | `true` para respuesta en streaming (text/plain) |
+| `rfc_filter` | string \| null | Limitar búsqueda a un documento por su ID (RFC o PDF) |
+| `stream` | bool | `true` para respuesta en streaming (`text/plain`) |
 
 Respuesta:
 ```json
@@ -129,7 +137,7 @@ Indexa RFCs del catálogo en background. Devuelve un `job_id`.
 
 ```bash
 curl -X POST /ingest \
-  -H "X-API-Key: <tu_clave>" \
+  -H "X-API-Key: <clave>" \
   -H "Content-Type: application/json" \
   -d '{"rfc_ids": ["rfc6749", "rfc7519"]}'
   # rfc_ids vacío = indexar todos
@@ -143,7 +151,7 @@ Sube e indexa un PDF propio. Máximo **50 MB**. Solo acepta `.pdf`.
 
 ```bash
 curl -X POST /documents/upload \
-  -H "X-API-Key: <tu_clave>" \
+  -H "X-API-Key: <clave>" \
   -F "file=@mi_documento.pdf" \
   -F "title=Mi Documento Técnico"      # opcional
 ```
@@ -192,11 +200,23 @@ Borra y recrea la colección ChromaDB. Útil para resetear tras un estado corrup
      -H "X-API-Key: <API_KEY>" \
      -d '{"rfc_ids": ["rfc6749", "rfc7519", "rfc7636"]}'
    ```
+6. Abrir la UI: `https://<tu-url>/ui`
 
 > **Nota sobre persistencia:** ChromaDB vive dentro del contenedor. Al reiniciar se
 > pierden los datos indexados. Solución recomendada: tras indexar, commitear el
 > directorio `data/chroma_db/` al repositorio (elimínalo del `.gitignore`) y el
 > `COPY data/ ./data/` del Dockerfile lo incluirá en la imagen.
+
+---
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+36 tests (20 de API + 16 de ingestion), sin credenciales ni red real. ChromaDB y OpenAI mockeados.
 
 ---
 
@@ -206,16 +226,23 @@ Borra y recrea la colección ChromaDB. Útil para resetear tras un estado corrup
 nan-rag/
 ├── Dockerfile
 ├── requirements.txt
-├── setup.sh                  # instalación local rápida
-├── .env.example              # plantilla de configuración
-├── CLAUDE.md                 # documentación técnica para desarrolladores
+├── requirements-dev.txt          # dependencias de test (pytest, httpx, pymupdf...)
+├── setup.sh                      # instalación local rápida
+├── .env.example                  # plantilla de configuración
+├── CLAUDE.md                     # documentación técnica para desarrolladores
+├── frontend/
+│   └── index.html                # chat UI (Alpine.js + Marked.js + Tailwind CDN)
 ├── data/
-│   └── chroma_db/            # ChromaDB persistente (excluida del repo)
+│   └── chroma_db/                # ChromaDB persistente (excluida del repo)
+├── tests/
+│   ├── conftest.py               # fixtures con mocks de ChromaDB y OpenAI
+│   ├── test_api.py               # tests de endpoints HTTP
+│   └── test_ingestion.py         # tests de chunking e ingesta
 └── src/
     ├── __init__.py
-    ├── config.py             # constantes, cliente NaN, catálogo de RFCs
-    ├── ingestion.py          # descarga RFCs, parsea PDFs, chunking, embedding
-    ├── query.py              # retrieval por similitud coseno + generación LLM
-    ├── api.py                # FastAPI: todos los endpoints HTTP
-    └── main.py               # CLI: ingest / ask / list
+    ├── config.py                 # constantes, cliente NaN, catálogo de RFCs
+    ├── ingestion.py              # descarga RFCs, parsea PDFs, chunking, embedding
+    ├── query.py                  # retrieval por similitud coseno + generación LLM
+    ├── api.py                    # FastAPI: todos los endpoints HTTP + StaticFiles
+    └── main.py                   # CLI: ingest / ask / list
 ```
