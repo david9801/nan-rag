@@ -379,7 +379,7 @@
         });
 
         this.messages.push({ role: 'user', content: q });
-        const assistantMsg = {
+        this.messages.push({
           role: 'assistant',
           content: '',
           sources: [],
@@ -387,8 +387,8 @@
           typing: false,
           showSources: false,
           error: null,
-        };
-        this.messages.push(assistantMsg);
+        });
+        const idx = this.messages.length - 1;
         this.loading = true;
         this.scrollToBottom();
 
@@ -404,31 +404,31 @@
           });
 
           if (resp.status === 429) {
-            assistantMsg.loading = false;
-            assistantMsg.error = 'Límite de peticiones alcanzado. Espera un momento antes de continuar.';
+            this.messages[idx].loading = false;
+            this.messages[idx].error = 'Límite de peticiones alcanzado. Espera un momento antes de continuar.';
             return;
           }
 
           if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
-            assistantMsg.loading = false;
-            assistantMsg.error = err.detail ?? `Error ${resp.status}`;
+            this.messages[idx].loading = false;
+            this.messages[idx].error = err.detail ?? `Error ${resp.status}`;
             return;
           }
 
           const data = await resp.json();
-          assistantMsg.loading = false;
-          assistantMsg.sources = data.sources ?? [];
-          assistantMsg.typing = true;
+          this.messages[idx].sources = data.sources ?? [];
+          this.messages[idx].loading = false;
+          this.messages[idx].typing = true;
 
           // Efecto typewriter
-          await this.typeWrite(data.answer ?? '', assistantMsg);
-          assistantMsg.typing = false;
+          await this.typeWrite(data.answer ?? '', idx);
+          this.messages[idx].typing = false;
           this.stats.chunks = (await (await fetch('/')).json()).chunks_indexed;
 
         } catch (e) {
-          assistantMsg.loading = false;
-          assistantMsg.error = 'Error de red. Comprueba la conexión.';
+          this.messages[idx].loading = false;
+          this.messages[idx].error = 'Error de red. Comprueba la conexión.';
         } finally {
           this.loading = false;
           this.scrollToBottom();
@@ -436,16 +436,16 @@
         }
       },
 
-      async typeWrite(text, msg) {
+      async typeWrite(text, idx) {
         const chunkSize = 4;
         for (let i = 0; i < text.length; i += chunkSize) {
-          msg.content += text.slice(i, i + chunkSize);
+          this.messages[idx].content += text.slice(i, i + chunkSize);
           if (i % 40 === 0) {
             this.scrollToBottom();
             await new Promise(r => setTimeout(r, 8));
           }
         }
-        msg.content = text; // asegurar que el contenido final es exacto
+        this.messages[idx].content = text;
       },
 
       submitSuggestion(s) {
