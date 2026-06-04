@@ -61,6 +61,20 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+# Evitar que el navegador cachee el HTML/JS del frontend de forma agresiva.
+# Sin esto, los usuarios siguen ejecutando una versión vieja del index.html
+# aunque el servidor ya sirva una nueva tras un redeploy.
+@app.middleware("http")
+async def _no_cache_frontend(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/ui"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 # Servir el frontend desde /ui si el directorio existe
 _frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.isdir(_frontend_dir):
